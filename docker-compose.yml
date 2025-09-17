@@ -1,0 +1,38 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: chatbot_frontend:latest
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: ./backend/Dockerfile
+    image: chatbot_backend:latest
+    ports:
+      - "8000:8000"
+    environment:
+      - API_KEY=$$2b$$12$$WcJU0Q.0c2gqOvKf8p2zOe6Nmb6ERqPWZgkS5Dr2rpIFzxS1ZpBnK
+      - QA_DB_PATH=/app/data/chatbot_data.db
+      - REDIS_URL=redis://redis:6379/0
+      - THRESH=0.45
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:

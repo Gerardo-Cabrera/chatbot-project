@@ -1,0 +1,345 @@
+<!-- 
+Frontend index.html: Interfaz de usuario principal para el widget de chat.
+
+Este archivo implementa:
+- Página web ligera con contenido de bienvenida
+- Widget de chat embebido y responsive
+- Gestión de sesiones persistentes en localStorage
+- Integración con la API REST del backend
+- Timeout de 5 segundos para respuestas
+- Carga automática de preguntas sugeridas
+- Prevención de cache para evitar respuestas obsoletas
+
+Autor: Sistema de Chatbot
+Versión: 2.0
+Fecha: Diciembre 2024
+-->
+
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <title>Chatbot - Sistema de Asistencia Inteligente</title>
+<style>
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;background:linear-gradient(180deg,#f8fafc, #eef2ff)}
+  .container{max-width:960px;margin:0 auto;padding:32px}
+  .hero{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:24px;box-shadow:0 8px 24px rgba(0,0,0,.06)}
+  .hero h1{margin:0 0 8px 0;font-size:24px}
+  .hero p{margin:0;color:#475569}
+  .chat-toggle{position:fixed;right:20px;bottom:20px;background:#2563eb;color:#fff;border:none;border-radius:999px;padding:12px 16px;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.15)}
+  .chat-panel{position:fixed;right:20px;bottom:80px;width:420px;max-height:75vh;background:#fff;border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.2);display:none;flex-direction:column;overflow:hidden;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif}
+  .chat-header{display:flex;align-items:center;justify-content:space-between;background:#1f2937;color:#fff;padding:10px 12px;font-weight:600}
+  .chat-body{padding:10px;overflow:auto;flex:1;background:#f9fafb}
+  .msg{margin:6px 0;padding:8px 10px;border-radius:10px;max-width:85%}
+  .msg.user{background:#dbeafe;margin-left:auto}
+  .msg.bot{background:#e5e7eb;margin-right:auto}
+  .chat-input{display:flex;gap:6px;padding:8px;background:#fff;border-top:1px solid #e5e7eb}
+  .chat-input input{flex:1;padding:8px;border:1px solid #e5e7eb;border-radius:8px}
+  .suggestions{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+  .suggestions button{background:#eef2ff;border:1px solid #c7d2fe;border-radius:999px;padding:6px 8px;cursor:pointer}
+  .settings{padding:8px;border-top:1px dashed #e5e7eb;background:#fff}
+  .hint{font-size:12px;color:#6b7280}
+  .small{font-size:12px;color:#6b7280}
+  .hidden{display:none}
+  .loading{opacity:.6}
+  .questions-title{font-weight:600;margin-top:6px}
+</style>
+</head><body>
+<div class="container">
+  <div class="hero">
+    <h1>Bienvenido</h1>
+    <p>Usa el botón “Chat” para conversar. También puedes elegir entre las sugerencias.</p>
+  </div>
+</div>
+
+<button id="chatToggle" class="chat-toggle">Chat</button>
+<div id="chatPanel" class="chat-panel">
+  <div class="chat-header">
+    <span>Asistente</span>
+    <button id="closeBtn" style="background:none;border:none;color:#fff;font-size:18px;cursor:pointer">×</button>
+  </div>
+  <div class="chat-body" id="chatBody">
+    <div class="msg bot">Hola 👋 ¿En qué puedo ayudarte?</div>
+    <div class="small">Sugerencias:</div>
+    <div id="suggestions" class="suggestions"></div>
+  </div>
+  <div class="chat-input">
+    <input id="chatInput" placeholder="Escribe tu mensaje..." />
+    <button id="sendBtn">Enviar</button>
+  </div>
+  <div class="settings">
+    <div class="small">No necesitas clave para conversar. La administración sigue protegida.</div>
+  </div>
+  <div class="settings">
+    <div class="small">Latencia objetivo: &lt; 5s por consulta.</div>
+  </div>
+  <div class="settings">
+    <button id="clearChatBtn" style="background:#6b7280;color:#fff;border:none;border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer">Limpiar Chat</button>
+    <div class="small" style="margin-top:4px">Si ves respuestas incorrectas, haz clic aquí para limpiar el contexto.</div>
+  </div>
+  <div class="settings hidden" id="errorBar"></div>
+  
+</div>
+
+<script>
+  // ========================================
+  // CONFIGURACIÓN INICIAL Y ELEMENTOS DOM
+  // ========================================
+  
+  /**
+   * Función auxiliar para obtener elementos del DOM por ID
+   * @param {string} id - ID del elemento
+   * @returns {HTMLElement} Elemento del DOM
+   */
+  const el = (id)=>document.getElementById(id);
+  
+  // Referencias a elementos principales del chat
+  const chatToggle = el('chatToggle');      // Botón para abrir/cerrar chat
+  const chatPanel = el('chatPanel');        // Panel principal del chat
+  const chatBody = el('chatBody');          // Área de mensajes
+  const sendBtn = el('sendBtn');            // Botón enviar mensaje
+  const chatInput = el('chatInput');        // Input de texto
+  const suggestionsBox = el('suggestions'); // Contenedor de sugerencias
+  const errorBar = el('errorBar');          // Barra de errores
+  const closeBtn = el('closeBtn');          // Botón cerrar chat
+  
+  // ========================================
+  // GESTIÓN DE SESIONES PERSISTENTES
+  // ========================================
+  
+  /**
+   * Sistema de sesiones persistentes usando localStorage.
+   * Cada navegador/pestaña mantiene una sesión única para evitar
+   * mezclar conversaciones de diferentes usuarios en la misma IP.
+   */
+  let sessionId = localStorage.getItem('chat_session_id');
+  if(!sessionId){
+    // Generar ID único: 's-' + random string + timestamp
+    sessionId = 's-'+Math.random().toString(36).slice(2)+Date.now().toString(36);
+    localStorage.setItem('chat_session_id', sessionId);
+  }
+
+  // ========================================
+  // CONTROL DE VISIBILIDAD DEL CHAT
+  // ========================================
+  
+  /**
+   * Muestra el panel de chat y carga las sugerencias
+   */
+  function showPanel(){ 
+    chatPanel.style.display='flex'; 
+    loadSuggestions(); 
+  }
+  
+  /**
+   * Oculta el panel de chat
+   */
+  function hidePanel(){ 
+    chatPanel.style.display='none'; 
+  }
+
+  // Event listeners para control del chat
+  chatToggle.addEventListener('click', showPanel);
+  closeBtn.addEventListener('click', hidePanel);
+
+  // ========================================
+  // CARGA DE PREGUNTAS SUGERIDAS
+  // ========================================
+  
+  /**
+   * Carga preguntas sugeridas desde la API y las muestra como botones.
+   * Cada sugerencia al hacer click envía automáticamente el mensaje.
+   * Implementa cache: 'no-store' para evitar respuestas obsoletas.
+   */
+  async function loadSuggestions(){
+    suggestionsBox.innerHTML = '';
+    try {
+      // Request con headers anti-cache
+      const res = await fetch('/api/v1/questions?limit=10', { 
+        cache: 'no-store', 
+        headers: { 'Pragma': 'no-cache' }
+      });
+      
+      if(!res.ok) throw new Error('No se pudo cargar sugerencias');
+      
+      const data = await res.json();
+      
+      // Crear botones para cada pregunta sugerida
+      data.questions.forEach(q => {
+        const b = document.createElement('button');
+        b.textContent = q.question;
+        // Al hacer click, establecer el valor y enviar automáticamente
+        b.onclick = ()=>{ 
+          chatInput.value = q.question; 
+          sendMessage(); 
+        };
+        suggestionsBox.appendChild(b);
+      });
+    } catch(e){ 
+      setError(e.message); 
+    }
+  }
+
+  function getAuthHeaders(){ 
+    return { 
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    }; 
+  }
+
+  function appendMsg(text, who){
+    const div = document.createElement('div');
+    div.className = 'msg '+who;
+    div.textContent = text;
+    chatBody.appendChild(div);
+    chatBody.scrollTop = chatBody.scrollHeight;
+  }
+
+  function setError(msg){
+    errorBar.classList.remove('hidden');
+    errorBar.textContent = msg;
+  }
+
+  function clearError(){
+    errorBar.classList.add('hidden');
+    errorBar.textContent = '';
+  }
+
+  // ========================================
+  // ENVÍO DE MENSAJES Y COMUNICACIÓN CON API
+  // ========================================
+  
+  let lastRequestId = 0;  // Contador para prevenir race conditions
+  
+  /**
+   * Función principal para enviar mensajes al chatbot.
+   * 
+   * Implementa:
+   * - Timeout de 5 segundos (requerimiento funcional)
+   * - Prevención de race conditions con requestId
+   * - Manejo de errores y estados de carga
+   * - Cache: 'no-store' para evitar respuestas obsoletas
+   * - Sesiones persistentes para mantener contexto
+   * - Headers anti-cache adicionales
+   */
+  async function sendMessage(){
+    clearError();
+    const msg = chatInput.value.trim();
+    if(!msg){ return; }  // No enviar mensajes vacíos
+    
+    // Mostrar mensaje del usuario inmediatamente
+    appendMsg(msg, 'user');
+    chatInput.value = '';
+    
+    // Preparar payload con sesión persistente
+    const payload = { message: msg, session_id: sessionId };
+    const headers = getAuthHeaders();
+    
+    // Configuración de timeout (requerimiento: <5 segundos)
+    const timeoutMs = 5000;
+    const requestId = ++lastRequestId;  // Incrementar ID para detectar requests obsoletos
+    const controller = new AbortController();
+    const timeout = setTimeout(()=>controller.abort(), timeoutMs);
+    
+    try{
+      // Indicar estado de carga
+      chatBody.classList.add('loading');
+      
+      // Enviar request con anti-cache y signal para cancelación
+      const res = await fetch('/api/v1/converse', { 
+        method:'POST', 
+        headers, 
+        body: JSON.stringify(payload), 
+        signal: controller.signal, 
+        cache: 'no-store',
+        credentials: 'omit'
+      });
+      
+      clearTimeout(timeout);
+      
+      if(!res.ok){ 
+        throw new Error('Error '+res.status); 
+      }
+      
+      const data = await res.json();
+      
+      // Solo mostrar respuesta si es el request más reciente (previene race conditions)
+      if(requestId === lastRequestId){
+        appendMsg(data.reply, 'bot');
+        
+        // Debug: mostrar información de la respuesta
+        console.log('🤖 Respuesta del bot:', data.reply.substring(0, 50) + '...');
+        console.log('📊 Confianza:', data.confidence);
+        console.log('✅ Entendido:', data.understood);
+      }
+      
+    }catch(e){
+      // Manejo de errores con mensajes user-friendly
+      appendMsg('Lo siento, hubo un problema procesando tu consulta.', 'bot');
+      setError(e.name === 'AbortError' ? 'Tiempo de espera excedido (5s).' : e.message);
+    } finally {
+      // Limpiar estado de carga
+      chatBody.classList.remove('loading');
+    }
+  }
+
+  // ========================================
+  // EVENT LISTENERS Y INICIALIZACIÓN
+  // ========================================
+  
+  // ========================================
+  // FUNCIONES DE UTILIDAD
+  // ========================================
+  
+  /**
+   * Genera un nuevo session_id para limpiar el contexto
+   */
+  function resetSession() {
+    sessionId = 's-'+Math.random().toString(36).slice(2)+Date.now().toString(36);
+    localStorage.setItem('chat_session_id', sessionId);
+    console.log('🔄 Nueva sesión generada:', sessionId);
+  }
+  
+  /**
+   * Limpia el historial del chat visualmente
+   */
+  function clearChatHistory() {
+    const messages = chatBody.querySelectorAll('.msg');
+    messages.forEach(msg => {
+      if (!msg.textContent.includes('Hola 👋') && !msg.textContent.includes('Sugerencias:')) {
+        msg.remove();
+      }
+    });
+  }
+
+  // Event listeners para envío de mensajes
+  sendBtn.addEventListener('click', sendMessage);
+  chatInput.addEventListener('keypress', (e)=>{ 
+    if(e.key==='Enter'){ 
+      sendMessage(); 
+    } 
+  });
+  
+  // Event listener para botón de limpiar chat
+  document.getElementById('clearChatBtn').addEventListener('click', () => {
+    resetSession();
+    clearChatHistory();
+    console.log('🧹 Chat limpiado - nueva sesión iniciada');
+  });
+
+  // Inicialización al cargar la página
+  window.addEventListener('load', ()=>{
+    // Opcional: descomentar para abrir el chat automáticamente
+    // showPanel(); 
+    
+    console.log('🤖 Chatbot cargado correctamente');
+    console.log('📱 Session ID:', sessionId);
+    console.log('🌐 API Base URL:', window.location.origin + '/api');
+    console.log('💡 Tip: Si ves respuestas incorrectas, recarga la página para limpiar el contexto');
+  });
+</script>
+
+</body></html>

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Acceso - Chatbot Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <style>
+    body{margin:0;background:#f1f5f9;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif}
+    .wrap{min-height:100vh;display:flex;align-items:center;justify-content:center}
+    .card{width:100%;max-width:420px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.06);padding:20px}
+    h2{margin:0 0 10px 0}
+    .row{display:flex;gap:8px;flex-wrap:wrap}
+    input{width:100%;border:1px solid #e5e7eb;border-radius:8px;padding:10px}
+    .btn{width:100%;background:#2563eb;color:#fff;border:none;border-radius:8px;padding:10px 12px;cursor:pointer;margin-top:10px}
+    .muted{color:#64748b;font-size:12px;margin-top:6px}
+    .alt{background:#0f766e}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h2>Acceso al Admin</h2>
+      <div class="row">
+        <input id="email" placeholder="Email"/>
+        <input id="password" type="password" placeholder="Contraseña (mín. 6)"/>
+      </div>
+      <button class="btn" onclick="login()">Login</button>
+      <button class="btn alt" onclick="registerUser()">Registro</button>
+      <div class="muted">Tras iniciar sesión, serás redirigido al panel de administración.</div>
+    </div>
+  </div>
+  <script>
+    function setCookie(name, value, days){
+      const d = new Date(); d.setTime(d.getTime()+(days*24*60*60*1000));
+      document.cookie = name+"="+value+";expires="+d.toUTCString()+";path=/;SameSite=Lax";
+    }
+    function getCookie(name){
+      const v = ("; "+document.cookie).split("; "+name+"=");
+      if(v.length===2) return v.pop().split(';').shift();
+      return '';
+    }
+    async function login(){
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      if(!email||!password){ return alert('Email y contraseña requeridos'); }
+      const res = await fetch('/api/v1/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email,password})});
+      if(!res.ok){ return alert('Credenciales inválidas'); }
+      const data = await res.json();
+      localStorage.setItem('admin_jwt', data.token);
+      setCookie('admin_jwt', data.token, 1);
+      location.href = '/admin';
+    }
+    async function registerUser(){
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      if(!email||!password||password.length<6){ return alert('Contraseña mínima 6'); }
+      const res = await fetch('/api/v1/auth/register', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email,password})});
+      if(!res.ok){ const t=await res.json().catch(()=>({detail:'Registro inválido'})); return alert(t.detail||'Registro inválido'); }
+      alert('Registro exitoso. Ahora inicia sesión.');
+    }
+    // Si ya hay JWT, redirigir directo al admin
+    (function(){ if(getCookie('admin_jwt')||localStorage.getItem('admin_jwt')){ location.href='/admin'; } })();
+  </script>
+</body>
+</html>
+
+

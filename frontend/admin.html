@@ -1,0 +1,362 @@
+<!-- Admin UI: simple admin panel to manage QA via the protected REST API. -->
+
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Admin - Chatbot</title>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<style>
+  body{margin:0;background:#f8fafc;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif}
+  .container{max-width:1000px;margin:0 auto;padding:24px}
+  .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;box-shadow:0 4px 16px rgba(0,0,0,.06)}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .btn{background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 12px;cursor:pointer}
+  .btn.secondary{background:#0f766e}
+  .btn.danger{background:#dc2626}
+  .btn:disabled{background:#9ca3af;cursor:not-allowed}
+  input,textarea{border:1px solid #e5e7eb;border-radius:8px;padding:8px;width:100%}
+  .grid{display:grid;grid-template-columns:80px 1fr;gap:8px;align-items:start}
+  .item{border:1px solid #e5e7eb;border-radius:10px;padding:10px;margin:8px 0}
+  .muted{color:#64748b;font-size:12px}
+  .auth-required{opacity:0.5;pointer-events:none}
+</style>
+</head>
+<body>
+<div class="container">
+  <h2>Admin - Q&A</h2>
+  <div class="card" id="accessCard" style="margin-bottom:12px">
+    <h3 style="margin:0 0 8px 0">Acceso</h3>
+    <div class="row" style="gap:10px">
+      <input id="email" placeholder="Email" style="flex:1;min-width:220px"/>
+      <input id="password" type="password" placeholder="Contraseña (mín. 6)" style="flex:1;min-width:220px"/>
+      <button class="btn" id="btnLogin" onclick="login()">Login</button>
+      <button class="btn secondary" id="btnRegister" onclick="registerUser()">Registro</button>
+      <button class="btn danger" id="btnLogout" onclick="logout()">Salir</button>
+    </div>
+    <div class="row" style="margin-top:8px;gap:10px">
+      <input id="apiKey" placeholder="(Opcional) API Key Bearer" style="flex:1;min-width:260px" onchange="checkAuth()"/>
+      <button class="btn secondary" onclick="syncSamples()">Sincronizar samples_seed.json</button>
+      <button class="btn secondary" onclick="reseed()">Reseed completo</button>
+    </div>
+    <div class="muted" id="authStatus" style="margin-top:8px">Usa Login (JWT) o API Key. JWT recomendado.</div>
+  </div>
+
+  <div class="card" style="margin-bottom:12px">
+    <h3 style="margin-top:0">Configuración del Bot</h3>
+    <div class="grid">
+      <div>Sensibilidad de coincidencia (0-1)</div>
+      <input id="thresh" type="number" step="0.01" min="0" max="1" placeholder="0.45"/>
+      <div>Cantidad máxima de mensajes en contexto</div>
+      <input id="maxHistory" type="number" min="1" max="20" placeholder="6"/>
+    </div>
+    <div class="muted" style="margin-top:8px">
+      • Sensibilidad: 0.1 = muy permisivo, 0.9 = muy estricto<br/>
+      • Contexto: cuántos últimos mensajes del usuario considera el bot para responder
+    </div>
+    <div style="margin-top:8px">
+      <button class="btn" onclick="loadConfig()">Cargar valores actuales</button>
+      <button class="btn secondary" onclick="saveConfig()">Guardar configuración</button>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:12px">
+    <h3 style="margin-top:0">Crear nueva Q&A</h3>
+    <div class="grid">
+      <div>Pregunta</div>
+      <input id="q" placeholder="Pregunta"/>
+      <div>Respuesta</div>
+      <textarea id="a" rows="4" placeholder="Respuesta"></textarea>
+    </div>
+    <div style="margin-top:8px"><button class="btn" onclick="create(event)">Crear</button></div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">Listado</h3>
+    <div id="list"></div>
+  </div>
+</div>
+
+<script>
+let isAuthenticated = false;
+
+let jwtToken = localStorage.getItem('admin_jwt') || '';
+function getCookie(name){ const v=("; "+document.cookie).split("; "+name+"="); if(v.length===2) return v.pop().split(';').shift(); return ''; }
+function setCookie(name,val,days){ const d=new Date(); d.setTime(d.getTime()+days*864e5); document.cookie=name+"="+val+";expires="+d.toUTCString()+";path=/;SameSite=Lax"; }
+
+function getAuth(){ 
+  const apiKey = document.getElementById('apiKey').value.trim();
+  const cookieToken = getCookie('admin_jwt');
+  if(cookieToken){ return {"Authorization":"Bearer "+cookieToken}; }
+  if(jwtToken){ return {"Authorization":"Bearer "+jwtToken}; }
+  if(apiKey){ return {"Authorization":"Bearer "+apiKey}; }
+  return {};
+}
+
+function setToken(token){
+  jwtToken = token || '';
+  if(jwtToken){ localStorage.setItem('admin_jwt', jwtToken); setCookie('admin_jwt', jwtToken, 1); }
+  else { localStorage.removeItem('admin_jwt'); setCookie('admin_jwt','',-1); }
+  const status = document.getElementById('authStatus');
+  status.textContent = jwtToken ? 'Autenticado con JWT' : 'No autenticado';
+}
+
+async function checkAuth(){
+  const apiKey = document.getElementById('apiKey').value.trim();
+  // Intentar primero con JWT si existe, sino con API Key
+  if(!jwtToken && !apiKey){ isAuthenticated = false; updateAuthUI(); return; }
+  
+  try{
+    const res = await fetchWithRetry('/api/v1/admin/config', { headers: getAuth() });
+    isAuthenticated = res.ok;
+    updateAuthUI();
+    if(isAuthenticated){
+      // Recargar Q&A con respuestas completas
+      await load();
+      await loadConfig();
+    }
+  }catch(e){
+    isAuthenticated = false;
+    updateAuthUI();
+  }
+}
+
+async function login(){
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+  if(!email || !password){ return Swal.fire('Error', 'Email y contraseña requeridos', 'error'); }
+  try{
+    const res = await fetch('/api/v1/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, password}) });
+    if(!res.ok){ throw new Error('Credenciales inválidas'); }
+    const data = await res.json();
+    setToken(data.token);
+    // Redirigir inmediatamente para que Nginx gate aplique y UI se refresque
+    window.location.href = '/admin';
+  }catch(err){ Swal.fire('Error', err.message, 'error'); }
+}
+
+async function registerUser(){
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+  if(!email || !password || password.length < 6){ return Swal.fire('Error', 'Contraseña mínima de 6 caracteres', 'error'); }
+  try{
+    const res = await fetch('/api/v1/auth/register', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, password}) });
+    if(!res.ok){ const t = await res.json().catch(()=>({detail:'Registro inválido'})); throw new Error(t.detail || 'Registro inválido'); }
+    Swal.fire('Éxito', 'Usuario registrado. Ahora puedes iniciar sesión.', 'success');
+  }catch(err){ Swal.fire('Error', err.message, 'error'); }
+}
+
+function logout(){
+  setToken('');
+  const apiKeyEl = document.getElementById('apiKey');
+  if(apiKeyEl){ apiKeyEl.value=''; }
+  // Redirigir a /auth
+  window.location.href = '/auth';
+}
+
+function updateAuthUI(){
+  const authElements = document.querySelectorAll('.auth-required');
+  authElements.forEach(el => {
+    if(isAuthenticated){
+      el.classList.remove('auth-required');
+      el.style.opacity = '1';
+      el.style.pointerEvents = 'auto';
+    } else {
+      el.classList.add('auth-required');
+      el.style.opacity = '0.5';
+      el.style.pointerEvents = 'none';
+    }
+  });
+  const accessCard = document.getElementById('accessCard');
+  if(accessCard){ accessCard.style.display = isAuthenticated ? 'none' : 'block'; }
+  const btnLogout = document.getElementById('btnLogout');
+  if(btnLogout){ btnLogout.style.display = isAuthenticated ? 'inline-block' : 'none'; }
+  const btnLogin = document.getElementById('btnLogin');
+  const btnRegister = document.getElementById('btnRegister');
+  if(btnLogin){ btnLogin.style.display = isAuthenticated ? 'none' : 'inline-block'; }
+  if(btnRegister){ btnRegister.style.display = isAuthenticated ? 'none' : 'inline-block'; }
+}
+
+async function fetchWithRetry(url, options={}, retries=3, delayMs=1200){
+  try{
+    const res = await fetch(url, { cache:'no-store', ...options });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    return res;
+  }catch(err){
+    if(retries>0){
+      await new Promise(r=>setTimeout(r, delayMs));
+      return fetchWithRetry(url, options, retries-1, delayMs*1.5);
+    }
+    throw err;
+  }
+}
+
+async function load(){
+  try{
+    const list = document.getElementById('list'); 
+    list.innerHTML='';
+    
+    // Si está autenticado, cargar desde endpoint de admin (con respuestas)
+    if(isAuthenticated) {
+      const res = await fetchWithRetry('/api/v1/admin/qa', { headers: getAuth() });
+      const data = await res.json();
+      
+      data.qa.forEach(item=>{
+        const div = document.createElement('div');
+        div.className = 'item';
+        div.innerHTML = `
+          <div class="muted">ID ${item.id}</div>
+          <div class="grid">
+            <div>Pregunta</div>
+            <input value="${item.question}" id="q-${item.id}">
+            <div>Respuesta</div>
+            <textarea id="a-${item.id}" rows="3">${item.answer || ''}</textarea>
+          </div>
+          <div style="margin-top:8px" class="row">
+            <button class="btn" onclick="update(${item.id})">Guardar</button>
+            <button class="btn danger" onclick="del(${item.id})">Eliminar</button>
+          </div>
+        `;
+        list.appendChild(div);
+      });
+    } else {
+      // Si no está autenticado, cargar solo preguntas desde endpoint público
+      const res = await fetchWithRetry('/api/v1/questions?limit=100');
+      const data = await res.json();
+      
+      data.questions.forEach(item=>{
+        const div = document.createElement('div');
+        div.className = 'item auth-required';
+        div.innerHTML = `
+          <div class="muted">ID ${item.id}</div>
+          <div class="grid">
+            <div>Pregunta</div>
+            <input value="${item.question}" id="q-${item.id}">
+            <div>Respuesta</div>
+            <textarea id="a-${item.id}" rows="3" placeholder="Ingresa API Key para ver respuesta"></textarea>
+          </div>
+          <div style="margin-top:8px" class="row">
+            <button class="btn" onclick="update(${item.id})">Guardar</button>
+            <button class="btn danger" onclick="del(${item.id})">Eliminar</button>
+          </div>
+        `;
+        list.appendChild(div);
+      });
+    }
+    
+    updateAuthUI();
+  }catch(e){ 
+    Swal.fire('Error', 'Error al cargar Q&A: '+e.message, 'error');
+  }
+}
+
+
+async function create(e){
+  if(e && e.preventDefault) e.preventDefault();
+  const fd = new FormData(); fd.append('question', document.getElementById('q').value); fd.append('answer', document.getElementById('a').value);
+  const res = await fetchWithRetry('/api/v1/admin/qa', { method:'POST', headers: getAuth(), body: fd });
+  if(res.ok){ 
+    Swal.fire('Éxito', 'Q&A creada correctamente', 'success');
+    document.getElementById('q').value=''; document.getElementById('a').value=''; 
+    await load(); 
+  }
+}
+
+async function update(id){
+  const fd = new FormData(); fd.append('question', document.getElementById(`q-${id}`).value); fd.append('answer', document.getElementById(`a-${id}`).value);
+  const res = await fetchWithRetry(`/api/v1/admin/qa/${id}`, { method:'PUT', headers: getAuth(), body: fd });
+  if(res.ok) { 
+    Swal.fire('Éxito', 'Q&A actualizada', 'success');
+    await load(); 
+  }
+}
+
+async function del(id){
+  const result = await Swal.fire({
+    title: '¿Eliminar Q&A?',
+    text: 'Esta acción no se puede deshacer',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Sí, eliminar',
+    cancelButtonText: 'Cancelar'
+  });
+  
+  if(result.isConfirmed){
+    const res = await fetchWithRetry(`/api/v1/admin/qa/${id}`, { method:'DELETE', headers: getAuth() });
+    if(res.ok) { 
+      Swal.fire('Éxito', 'Q&A eliminada', 'success');
+      await load(); 
+    }
+  }
+}
+
+async function syncSamples(){
+  const res = await fetchWithRetry('/api/v1/admin/sync-samples', { method:'POST', headers: getAuth() });
+  if(res.ok){ 
+    const data = await res.json(); 
+    Swal.fire('Sincronización', data.synced ? 'Sincronizado. Insertados: '+data.count : data.message, data.synced ? 'success' : 'info');
+    await load(); 
+  }
+}
+
+async function reseed(){
+  const result = await Swal.fire({
+    title: 'Reseed completo',
+    text: 'Esto borrará todas las Q&A y recargará samples_seed.json',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Sí, continuar',
+    cancelButtonText: 'Cancelar'
+  });
+  
+  if(result.isConfirmed){
+    const res = await fetchWithRetry('/api/v1/admin/reseed', { method:'POST', headers: getAuth() });
+    if(res.ok){ 
+      const data = await res.json(); 
+      Swal.fire('Éxito', 'Reseed OK. Insertados: '+data.count, 'success');
+      await load(); 
+    }
+  }
+}
+
+async function loadConfig(){
+  const res = await fetchWithRetry('/api/v1/admin/config', { headers: getAuth() });
+  if(res.ok){ 
+    const data = await res.json(); 
+    document.getElementById('thresh').value = data.THRESH; 
+    document.getElementById('maxHistory').value = data.MAX_HISTORY; 
+  }
+}
+
+async function saveConfig(){
+  const fd = new FormData(); 
+  fd.append('thresh', document.getElementById('thresh').value); 
+  fd.append('max_history', document.getElementById('maxHistory').value);
+  
+  const res = await fetchWithRetry('/api/v1/admin/config', { method:'POST', headers: getAuth(), body: fd });
+  if(res.ok){ 
+    Swal.fire('Éxito', 'Configuración guardada en base de datos', 'success');
+  }
+}
+
+// Cargar automáticamente al abrir la página
+window.addEventListener('load', async () => {
+  // Hard gate on client: if no JWT cookie, go to /auth
+  if(!getCookie('admin_jwt')){ location.href = '/auth'; return; }
+  // Validar token con backend; si falla redirigir
+  try{
+    const res = await fetch('/api/v1/admin/config', { headers: getAuth() });
+    if(!res.ok){ throw new Error('unauth'); }
+    isAuthenticated = true;
+    updateAuthUI();
+    await load();
+  }catch(_){
+    setToken('');
+    location.href = '/auth';
+    return;
+  }
+});
+</script>
+</body>
+</html>

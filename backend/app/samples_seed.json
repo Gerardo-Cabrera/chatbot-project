@@ -1,0 +1,46 @@
+[
+  {
+    "question": "¿Cuál es el horario de atención?",
+    "answer": "Nuestro horario de atención es de lunes a viernes de 9:00 a 18:00 hora de Costa Rica."
+  },
+  {
+    "question": "¿Cómo puedo contactar soporte?",
+    "answer": "Puedes escribir a soporte@empresa.com o llamar al +1-800-555-1234."
+  },
+  {
+    "question": "¿Dónde están ubicados?",
+    "answer": "Nuestra oficina principal está en Calle Falsa 123, Ciudad Falsa."
+  },
+  {
+    "question": "¿Qué puedo hacer en el sistema?",
+    "answer": "Puedes hacer consultas sobre los servicios que ofrecemos."
+  },
+  {
+    "question": "¿Cómo restablezco mi contraseña?",
+    "answer": "Usa la opción 'Olvidé mi contraseña' en la página de login."
+  },
+  {
+    "question": "¿Qué métodos de pago aceptan?",
+    "answer": "Aceptamos tarjetas de crédito, débito y transferencia bancaria."
+  },
+  {
+    "question": "¿Puedo cambiar mi plan más tarde?",
+    "answer": "Sí, puedes actualizar o cambiar tu plan desde tu panel de usuario."
+  },
+  {
+    "question": "¿Ofrecen descuentos para estudiantes?",
+    "answer": "Sí; tenemos un 25% de descuento para estudiantes con identificación válida."
+  },
+  {
+    "question": "¿Cuál es la política de reembolsos?",
+    "answer": "Ofrecemos reembolso completo dentro de los primeros 14 días."
+  },
+  {
+    "question": "¿Cómo agrego un usuario nuevo?",
+    "answer": "En el panel de administración, ve a Usuarios → Nuevo usuario."
+  },
+  {
+    "question": "¿Tienen API pública?",
+    "answer": "Sí, contamos con una API pública documentada; solicita acceso a desarrolladores@empresa.com."
+  }
+]
