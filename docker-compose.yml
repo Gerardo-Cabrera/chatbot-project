@@ -16,7 +16,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - API_KEY=$$2b$$12$$WcJU0Q.0c2gqOvKf8p2zOe6Nmb6ERqPWZgkS5Dr2rpIFzxS1ZpBnK
+      - API_KEY=ee60f033b2409b81cbdfd35da47c2a86
+      - JWT_SECRET=617f9d2c597971baaa6c6d2a98b2e42ddb9d189b70aef2320802791743ef9bbf
       - QA_DB_PATH=/app/data/chatbot_data.db
       - REDIS_URL=redis://redis:6379/0
       - THRESH=0.45

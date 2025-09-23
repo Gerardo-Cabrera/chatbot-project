@@ -1,0 +1,96 @@
+body{
+    margin:0;
+    background:#f8fafc;
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;
+}
+
+.container{
+    max-width:1000px;
+    margin:0 auto;
+    padding:24px;
+}
+
+.card{
+    background:#fff;
+    border:1px solid #e5e7eb;
+    border-radius:12px;
+    padding:16px;
+    box-shadow:0 4px 16px rgba(0,0,0,.06);
+}
+
+.row{
+    display:flex;
+    gap:8px;
+    align-items:center;flex-wrap:wrap;
+}
+
+.btn{
+    background:#2563eb;
+    color:#fff;
+    border:none;
+    border-radius:8px;
+    padding:8px 12px;
+    cursor:pointer;
+}
+
+.btn.secondary{
+    background:#0f766e;
+}
+
+.btn.danger{
+    background:#dc2626;
+}
+
+.btn:disabled{
+    background:#9ca3af;
+    cursor:not-allowed;
+}
+
+input,textarea{
+    border:1px solid #e5e7eb;
+    border-radius:8px;
+    padding:8px;
+    width:100%;
+}
+
+.grid{
+    display:grid;
+    grid-template-columns:80px 1fr;
+    gap:8px;
+    align-items:start;
+}
+
+.item{
+    border:1px solid #e5e7eb;
+    border-radius:10px;
+    padding:10px;
+    margin:8px 0;
+}
+
+.muted{
+    color:#64748b;
+    font-size:12px;
+}
+
+.auth-required{
+    opacity:0.5;
+    pointer-events:none;
+}
+
+.logoutWrapper {
+    text-align:right;
+    margin-bottom:10px;
+    display:none;
+}
+
+.accessCard {
+    margin-bottom: 12px;
+}
+
+.divInsideDivGrid {
+    width: 240px;
+}
+
+.inputInsideDivGrid {
+    margin-left: 150px;
+}

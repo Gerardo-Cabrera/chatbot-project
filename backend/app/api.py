@@ -9,8 +9,11 @@ Este módulo define todos los endpoints de la API, incluyendo:
 - Algoritmos de matching de similitud
 """
 
-from fastapi import APIRouter, FastAPI, Request, Depends, HTTPException, Form
-from .auth import verify_api_key, verify_admin_auth, jwt_encode
+from fastapi import APIRouter, FastAPI, Request, Depends, HTTPException, Form, Cookie
+from fastapi.responses import JSONResponse
+from .auth import verify_api_key, verify_admin_auth, jwt_encode, JWT_TTL, JWT_SECRET, JWT_ALG, SERVER_START_TIME, \
+    REFRESH_TTL, ACCESS_TTL, create_access_token, create_refresh_token, make_csrf_token, \
+    COOKIE_SECURE, _store_refresh_jti, secrets
 from .db import create_user, get_user_by_email
 import bcrypt
 from .db import get_conn
@@ -269,16 +272,72 @@ def auth_register(payload: RegisterPayload):
 @router.post('/auth/login')
 def auth_login(payload: LoginPayload):
     email = payload.email.strip().lower()
+    pw = payload.password
+
+    if not email or not pw:
+        raise HTTPException(status_code=400, detail="Invalid email or password")
+
     row = get_user_by_email(email)
     if not row:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    if not bcrypt.checkpw(payload.password.encode('utf-8'), row['password_hash'].encode('utf-8')):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    token = jwt_encode({ 'sub': row['id'], 'email': row['email'], 'scope': 'admin' })
-    return { 'ok': True, 'token': token }
+
+    try:
+        if not bcrypt.checkpw(pw.encode("utf-8"), row["password_hash"].encode("utf-8")):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Error verifying password")
+
+    payload_token = {"sub": row["id"], "email": row["email"], "scope": "admin"}
+    access = create_access_token(payload_token)
+
+    jti = secrets.token_urlsafe(12)
+    now = int(time.time())
+    exp_ts = now + REFRESH_TTL
+    refresh = create_refresh_token(payload_token, jti)
+    _store_refresh_jti(jti, row["id"], exp_ts)
+
+    csrf = make_csrf_token()
+
+    samesite_val = "None" if COOKIE_SECURE else "Lax"
+    resp = JSONResponse({"ok": True, "access_token": access})
+    # set refresh cookie (HttpOnly)
+    resp.set_cookie("refresh_token", refresh, max_age=REFRESH_TTL, httponly=True, secure=COOKIE_SECURE, samesite=samesite_val, path="/")
+    # set admin_jwt cookie for compatibility (short-lived access token, HttpOnly)
+    resp.set_cookie("admin_jwt", access, max_age=ACCESS_TTL, httponly=True, secure=COOKIE_SECURE, samesite=samesite_val, path="/")
+    # csrf token (readable by JS)
+    resp.set_cookie("csrf_token", csrf, max_age=REFRESH_TTL, httponly=False, secure=COOKIE_SECURE, samesite=samesite_val, path="/")
+    return resp
+
+
+@router.get('/auth/status')
+def auth_status(_auth=Depends(verify_admin_auth)):
+    """
+    Endpoint ligero para comprobar si la sesión/admin cookie es válida.
+    Devuelve 200 OK si la cookie `admin_jwt` o Authorization header contiene
+    un token de acceso válido. Uso desde el frontend para verificar sesión.
+    """
+    # _auth contiene el payload del token retornado por verify_jwt
+    try:
+        user_info = {
+            'sub': _auth.get('sub') if isinstance(_auth, dict) else None,
+            'email': _auth.get('email') if isinstance(_auth, dict) else None,
+            'scope': _auth.get('scope') if isinstance(_auth, dict) else None,
+        }
+    except Exception:
+        user_info = None
+    return {'ok': True, 'user': user_info}
+
+
+@router.post('/auth/logout')
+def auth_logout():
+    # elimina cookie (Max-Age=0)
+    resp = JSONResponse({'ok': True})
+    resp.delete_cookie('admin_jwt', path='/')
+    return resp
+
 
 @router.get('/admin/qa')
-def admin_list(auth=Depends(verify_admin_auth)):
+def admin_list(_auth=Depends(verify_admin_auth)):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("SELECT id, question, answer, tags FROM qa WHERE id > 0 ORDER BY id")
@@ -287,7 +346,7 @@ def admin_list(auth=Depends(verify_admin_auth)):
     return {'qa': [{ 'id': r['id'], 'question': r['question'], 'answer': r['answer'], 'tags': r['tags']} for r in rows]}
 
 @router.post('/admin/qa')
-def admin_create(question: str = Form(...), answer: str = Form(...), tags: str = Form(''), auth=Depends(verify_admin_auth)):
+def admin_create(question: str = Form(...), answer: str = Form(...), tags: str = Form(''), _auth=Depends(verify_admin_auth)):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("INSERT INTO qa (question,answer,tags) VALUES (?,?,?)", (question.strip(), answer.strip(), tags))
@@ -297,7 +356,7 @@ def admin_create(question: str = Form(...), answer: str = Form(...), tags: str =
     return {'ok': True, 'id': nid}
 
 @router.put('/admin/qa/{qa_id}')
-def admin_update(qa_id: int, question: str = Form(...), answer: str = Form(...), tags: str = Form(''), auth=Depends(verify_admin_auth)):
+def admin_update(qa_id: int, question: str = Form(...), answer: str = Form(...), tags: str = Form(''), _auth=Depends(verify_admin_auth)):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("UPDATE qa SET question=?, answer=?, tags=? WHERE id=?", (question.strip(), answer.strip(), tags, qa_id))
@@ -306,7 +365,7 @@ def admin_update(qa_id: int, question: str = Form(...), answer: str = Form(...),
     return {'ok': True}
 
 @router.delete('/admin/qa/{qa_id}')
-def admin_delete(qa_id: int, auth=Depends(verify_admin_auth)):
+def admin_delete(qa_id: int, _auth=Depends(verify_admin_auth)):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("DELETE FROM qa WHERE id=?", (qa_id,))
@@ -315,7 +374,7 @@ def admin_delete(qa_id: int, auth=Depends(verify_admin_auth)):
     return {'ok': True}
 
 @router.post('/admin/reseed')
-def admin_reseed(auth=Depends(verify_admin_auth)):
+def admin_reseed(_auth=Depends(verify_admin_auth)):
     # Danger: clears table and loads samples
     conn = get_conn()
     cur = conn.cursor()
@@ -329,7 +388,7 @@ def admin_reseed(auth=Depends(verify_admin_auth)):
     return { 'ok': True, 'count': len(samples) }
 
 @router.get('/admin/config')
-def admin_get_config(auth=Depends(verify_admin_auth)):
+def admin_get_config(_auth=Depends(verify_admin_auth)):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("SELECT answer FROM qa WHERE id = -2 AND question = '__config__'")
@@ -349,7 +408,7 @@ def admin_get_config(auth=Depends(verify_admin_auth)):
         }
 
 @router.post('/admin/config')
-def admin_save_config(thresh: float = Form(...), max_history: int = Form(...), auth=Depends(verify_admin_auth)):
+def admin_save_config(thresh: float = Form(...), max_history: int = Form(...), _auth=Depends(verify_admin_auth)):
     conn = get_conn()
     cur = conn.cursor()
     config = {
@@ -366,7 +425,7 @@ def admin_save_config(thresh: float = Form(...), max_history: int = Form(...), a
     return {'ok': True, 'config': config}
 
 @router.post('/admin/sync-samples')
-def admin_sync_samples(auth=Depends(verify_api_key)):
+def admin_sync_samples(_auth=Depends(verify_api_key)):
     # Load current samples and compute hash
     samples = load_samples()
     samples_str = str(sorted(samples, key=lambda x: x.get('question','')))
@@ -390,6 +449,69 @@ def admin_sync_samples(auth=Depends(verify_api_key)):
     conn.commit()
     conn.close()
     return { 'ok': True, 'synced': True, 'count': len(samples) }
+
+@router.post('/auth/refresh')
+def auth_refresh(admin_jwt: Optional[str] = Cookie(None)):
+    """
+    Endpoint para refrescar tokens JWT expirados o próximos a expirar.
+    Verifica el token actual y emite uno nuevo si es válido.
+    """
+    if not admin_jwt:
+        raise HTTPException(status_code=401, detail="No token provided")
+    
+    try:
+        import jwt
+        # Decodificar el token actual sin verificar expiración
+        data = jwt.decode(admin_jwt, JWT_SECRET, algorithms=[JWT_ALG], options={"verify_exp": False})
+        
+        # Verificar que el token no sea demasiado viejo (máximo 24 horas)
+        iat = data.get('iat', 0)
+        max_token_age = 86400  # 24 horas en segundos
+        
+        if iat < (SERVER_START_TIME - max_token_age):
+            raise HTTPException(status_code=401, detail="Token too old - please reauthenticate")
+        
+        # Verificar que el token tenga la estructura esperada
+        if 'sub' not in data or 'email' not in data or 'scope' not in data:
+            raise HTTPException(status_code=401, detail="Invalid token structure")
+        
+        # Emitir nuevo token con tiempo de vida extendido
+        new_token = jwt_encode({
+            'sub': data['sub'], 
+            'email': data['email'], 
+            'scope': data['scope']
+        })
+        
+        # Responder con nuevo token y actualizar cookie
+        resp = JSONResponse({'ok': True, 'token': new_token})
+        resp.set_cookie(
+            'admin_jwt', 
+            new_token, 
+            max_age=JWT_TTL, 
+            httponly=True, 
+            samesite='lax',
+            secure=False  # Cambiar a True en producción con HTTPS
+        )
+        return resp
+        
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Token refresh failed: {str(e)}")
+    
+
+@router.get('/debug/headers')
+async def debug_headers(request: Request, admin_jwt: Optional[str] = Cookie(None)):
+    """
+    Endpoint temporal para ver qué headers y cookies recibe FastAPI.
+    Retorna:
+      - headers tal cual los ve FastAPI (dict)
+      - el valor de la cookie admin_jwt pasada por FastAPI (o None)
+    """
+    # convertir headers a dict normal para JSON serializable
+    headers = {k: v for k, v in request.headers.items()}
+    return {"headers": headers, "cookie_admin_jwt": admin_jwt}
+    
 
 def register_routes(app: FastAPI):
     app.include_router(router)

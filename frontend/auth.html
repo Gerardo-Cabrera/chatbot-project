@@ -21,48 +21,21 @@
   <div class="wrap">
     <div class="card">
       <h2>Acceso al Admin</h2>
-      <div class="row">
-        <input id="email" placeholder="Email"/>
-        <input id="password" type="password" placeholder="Contraseña (mín. 6)"/>
-      </div>
-      <button class="btn" onclick="login()">Login</button>
-      <button class="btn alt" onclick="registerUser()">Registro</button>
+
+      <form id="loginForm" novalidate>
+        <div class="row">
+          <input id="email" name="email" placeholder="Email" autocomplete="username"/>
+          <input id="password" name="password" type="password" placeholder="Contraseña (mín. 6)" autocomplete="current-password"/>
+        </div>
+
+        <button id="loginBtn" class="btn" type="submit">Login</button>
+        <button id="registerBtn" class="btn alt" type="button">Registro</button>
+      </form>
+
       <div class="muted">Tras iniciar sesión, serás redirigido al panel de administración.</div>
     </div>
   </div>
-  <script>
-    function setCookie(name, value, days){
-      const d = new Date(); d.setTime(d.getTime()+(days*24*60*60*1000));
-      document.cookie = name+"="+value+";expires="+d.toUTCString()+";path=/;SameSite=Lax";
-    }
-    function getCookie(name){
-      const v = ("; "+document.cookie).split("; "+name+"=");
-      if(v.length===2) return v.pop().split(';').shift();
-      return '';
-    }
-    async function login(){
-      const email = document.getElementById('email').value.trim();
-      const password = document.getElementById('password').value;
-      if(!email||!password){ return alert('Email y contraseña requeridos'); }
-      const res = await fetch('/api/v1/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email,password})});
-      if(!res.ok){ return alert('Credenciales inválidas'); }
-      const data = await res.json();
-      localStorage.setItem('admin_jwt', data.token);
-      setCookie('admin_jwt', data.token, 1);
-      location.href = '/admin';
-    }
-    async function registerUser(){
-      const email = document.getElementById('email').value.trim();
-      const password = document.getElementById('password').value;
-      if(!email||!password||password.length<6){ return alert('Contraseña mínima 6'); }
-      const res = await fetch('/api/v1/auth/register', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email,password})});
-      if(!res.ok){ const t=await res.json().catch(()=>({detail:'Registro inválido'})); return alert(t.detail||'Registro inválido'); }
-      alert('Registro exitoso. Ahora inicia sesión.');
-    }
-    // Si ya hay JWT, redirigir directo al admin
-    (function(){ if(getCookie('admin_jwt')||localStorage.getItem('admin_jwt')){ location.href='/admin'; } })();
-  </script>
+
+  <script src="./src/js/auth.js" defer></script>
 </body>
 </html>
-
-
